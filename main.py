@@ -156,6 +156,7 @@ if __name__ == "__main__":
     tickets = json.load(open("data/tickets.json"))
     for ticket in tickets:
         db.insert_ticket(ticket)
+        print(f"ticket inserted: {ticket["id"]}")
         for message in ticket.get("messages", []):
             if message["is_incoming"] == "1":
                 role = "Customer"

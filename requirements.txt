@@ -1,2 +1,6 @@
 sqlalchemy
 dotenv
+requests
+qdrant_client 
+ollama 
+typing

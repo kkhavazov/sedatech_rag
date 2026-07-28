@@ -16,25 +16,6 @@ services:
     volumes:
       - ./qdrant_data:/qdrant/storage
 
-  ollama:
-    image: ollama/ollama:0.30.10
-    restart: unless-stopped
-    container_name: ollama
-
-    ports:
-      - 11434:11434
-    expose:
-      - 11434
-    volumes:
-      - ./ollama_data:/ollama/data
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
-
 configs:
   qdrant_config:
     content: |

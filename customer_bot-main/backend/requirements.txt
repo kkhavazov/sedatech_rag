@@ -1,0 +1,10 @@
+httpx
+requests
+fastapi
+uvicorn
+pydantic
+python-dotenv
+ollama
+fastapi-cache2[redis]
+jinja2
+qdrant_client
