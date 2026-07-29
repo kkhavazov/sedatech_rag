@@ -6,8 +6,8 @@ from ollama import Client
 from qdrant_client import QdrantClient
 from qdrant_client.models import Filter, FieldCondition, MatchValue
 
-OLLAMA_ADDRESS = "http://192.168.125.110:11434" 
-QDRANT_URL = "http://192.168.125.110:6333"
+OLLAMA_ADDRESS = "http://ollama-container:11434"
+QDRANT_URL = "http://qdrant:6333"
 COLLECTION_NAME = "ticket_chunks"
 EMBED_MODEL = "bge-m3"
 CHAT_MODEL = "llama3.1:8b"
@@ -18,11 +18,18 @@ ollama_client = Client(OLLAMA_ADDRESS)
 qdrant_client = QdrantClient(url=QDRANT_URL)
 
 SYSTEM_INSTRUCTIONS = """You are a customer support assistant helping an agent respond to a customer.
-You are creating a response ti the last message by the customer.
-Use the retrieved precedent tickets as reference for likely resolutions, but
-prioritize what the customer has actually said in this conversation. If the
-precedents don't cover the current situation, say so rather than guessing.
-Reply in French."""
+Your task is to create a response to the last message by the customer.
+
+[CRITICAL INSTRUCTION]
+Regardless of the language used by the customer or the retrieved tickets, you MUST write your entire final response in French. This is a strict rule.
+
+[GUIDELINES]
+1. Use the retrieved precedent tickets as reference for likely resolutions.
+2. Prioritize what the customer has actually said in this conversation.
+3. If the precedents don't cover the current situation, explicitly state so in French rather than guessing.
+
+[OUTPUT FORMAT]
+Response (in French):"""
 
 
 class Conversation:
@@ -109,9 +116,13 @@ Summary:"""
 
         summary_block = f"Summary of earlier conversation: {self.summary}\n\n" if self.summary else ""
 
+        system_content = f"""{SYSTEM_INSTRUCTIONS}
+
+        {summary_block}Relevant precedent tickets:
+        {retrieved_context}"""
+
         messages = [
-            {"role": "system", "content": SYSTEM_INSTRUCTIONS},
-            {"role": "system", "content": f"{summary_block}Relevant precedent tickets:\n{retrieved_context}"},
+            {"role": "system", "content": system_content},
             *self.turns,
         ]
 
