@@ -7,7 +7,7 @@ from config import ollama_address, QDRANT_URL
 from ollama import Client
 
 DB_PATH = "chunks.db"
-EMBED_MODEL = "bge-m3"
+EMBED_MODEL = "qwen3-embedding:4b"
 COLLECTION_NAME = "ticket_chunks"
 BATCH_SIZE = 16
 
@@ -33,6 +33,8 @@ def embed_texts(texts: list[str]) -> list[list[float]]:
 
 
 def ensure_collection(client: QdrantClient, vector_size: int):
+    # 2. Delete the specific collection
+    client.delete_collection(collection_name="ticket_chunks")
     if not client.collection_exists(COLLECTION_NAME):
         client.create_collection(
             collection_name=COLLECTION_NAME,

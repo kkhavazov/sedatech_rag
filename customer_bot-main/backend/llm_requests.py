@@ -6,11 +6,11 @@ from ollama import Client
 from qdrant_client import QdrantClient
 from qdrant_client.models import Filter, FieldCondition, MatchValue
 
-OLLAMA_ADDRESS = "http://ollama-container:11434"
-QDRANT_URL = "http://qdrant:6333"
+OLLAMA_ADDRESS = "http://192.168.125.110:11434"
+QDRANT_URL = "http://192.168.125.110:6333"
 COLLECTION_NAME = "ticket_chunks"
-EMBED_MODEL = "bge-m3"
-CHAT_MODEL = "llama3.1:8b"
+EMBED_MODEL = "qwen3-embedding:4b"
+CHAT_MODEL = "qwen3.5:9b"
 TOP_K = 5
 MAX_VERBATIM_TURNS = 8  # keep the last N turns in full; summarize anything older
 
@@ -112,6 +112,7 @@ Summary:"""
             f"Precedent {i+1}: Customer problem: {m['problem_text']}\nResolution: {m['linked_resolution']}"
             for i, m in enumerate(matches)
         ]
+        print(context_blocks)
         retrieved_context = "\n\n".join(context_blocks) if context_blocks else "No close precedents found."
 
         summary_block = f"Summary of earlier conversation: {self.summary}\n\n" if self.summary else ""
@@ -126,7 +127,13 @@ Summary:"""
             *self.turns,
         ]
 
-        response = ollama_client.chat(model=CHAT_MODEL, messages=messages)
+        response = ollama_client.chat(model=CHAT_MODEL, 
+        messages=messages, 
+        think = False, 
+        options={
+        "temperature": 0.1,
+        "num_ctx": 16384,
+    })
         reply = response["message"]["content"]
         self.add_agent_message(reply)
 

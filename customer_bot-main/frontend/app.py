@@ -1,18 +1,20 @@
-import streamlit as st
-import requests
 import os
 import html
-import streamlit as st
-import os
-
+import requests
 from dotenv import load_dotenv
+import streamlit as st
+
 load_dotenv()  
 
+# Configuration Streamlit (DOIT être en premier, juste après les imports)
+st.set_page_config(layout="wide") 
 
+# Configuration des variables globales et des en-têtes
 API_URL = os.environ["FASTAPI_INTERNAL_URL"] 
 API_KEY = os.environ["INTERNAL_API_KEY"]
-headers={"X-API-Key": API_KEY}
+headers = {"X-API-Key": API_KEY}
 
+# --- SYSTÈME D'AUTHENTIFICATION ---
 def check_password():
     if "authenticated" not in st.session_state:
         st.session_state.authenticated = False
@@ -36,85 +38,143 @@ if not check_password():
     st.stop()
 
 
-API_URL = os.environ["FASTAPI_INTERNAL_URL"]  # Railway private hostname
-API_KEY = os.environ["INTERNAL_API_KEY"]
+# --- FONCTIONS API ---
+# Pas de cache ici pour répondre à votre exigence : la liste change constamment
 def get_open_list():
     EDESK_API_KEY = os.getenv("EDESK_API_KEY")
+    if not EDESK_API_KEY:
+        st.sidebar.error("EDESK_API_KEY manquante.")
+        return []
+        
     token = EDESK_API_KEY.strip()
-    headers = {
-            "accept": "application/json",
-            "authorization": token
-        }
+    edesk_headers = {
+        "accept": "application/json",
+        "authorization": token
+    }
     url = "https://api.edesk.com/v1/tickets?filter_status_equals=Pending"
 
-    
+    try:
+        response = requests.get(url, headers=edesk_headers, timeout=15)
+        response.raise_for_status()
+        return [ticket["id"] for ticket in response.json().get("data", [])]
+    except Exception as e:
+        st.sidebar.error(f"Erreur eDesk: {e}")
+        return []
 
-    response = requests.get(url, headers=headers)
-    result = []
-    for ticket in response.json()["data"]:
-        result.append(ticket["id"])
-    return result
 
-st.set_page_config(layout="wide") 
-
+# --- INTERFACE : SIDEBAR (FILE D'ATTENTE) ---
 with st.sidebar:
     st.title("Queue")
     open_tickets = get_open_list()
+    
+    if not open_tickets:
+        st.info("Aucun ticket en attente.")
+        st.stop()
+        
     ticket_id = st.selectbox("Select a ticket to review:", open_tickets)
-    if st.button("Refresh Queue"):
+    if st.button("Refresh Queue", use_container_width=True):
         st.rerun()
 
 
+# --- CHARGEMENT DU TICKET SÉLECTIONNÉ ---
 st.header(f"Reviewing Ticket: {ticket_id}")
 
+try:
+    response = requests.get(f"{API_URL}/{ticket_id}", headers=headers, timeout=15)
+    response.raise_for_status()
+    ticket_data = response.json()
+    messages = ticket_data.get("messages", [])
+except Exception as e:
+    st.error(f"Impossible de récupérer le contexte du ticket: {e}")
+    st.stop()
 
-col_history, col_editor = st.columns([1, 1]) # Split screen 50/50
 
-response = requests.get(f"{API_URL}/{ticket_id}", headers=headers)
-ticket_data = response.json()
-messages = ticket_data.get("messages", [])
+# --- GESTION DU DRAFT DANS LE SESSION STATE ---
+# On initialise les clés si elles n'existent pas
+if "current_draft" not in st.session_state:
+    st.session_state.current_draft = ""
+if "last_ticket" not in st.session_state:
+    st.session_state.last_ticket = None
 
-if "current_draft" not in st.session_state or st.session_state.get("last_ticket") != ticket_id:
+# GÉNERATION INITIALE : Uniquement si on change de ticket OU si le draft est vide
+if st.session_state.last_ticket != ticket_id or not st.session_state.current_draft:
     with st.spinner("Generating initial draft..."):
-        draft_text = requests.get(f"{API_URL}/{ticket_id}/llm_response", headers=headers).json()["draft_response"]["reply"]
-        st.session_state.current_draft = html.unescape(draft_text).replace("<br />", "\n")
-        st.session_state.last_ticket = ticket_id
+        try:
+            # Timeout long (60s) car les LLM peuvent être lents à répondre
+            llm_res = requests.get(f"{API_URL}/{ticket_id}/llm_response", headers=headers, timeout=60).json()
+            draft_text = llm_res["draft_response"]["reply"]
+            
+            # On stocke le résultat propre dans le State
+            st.session_state.current_draft = html.unescape(draft_text).replace("<br />", "\n")
+            st.session_state.last_ticket = ticket_id
+        except Exception as e:
+            st.error(f"Erreur lors de la génération du draft initial : {e}")
 
+
+# --- AFFICHAGE DE L'INTERFACE 50/50 ---
 col_history, col_editor = st.columns([1, 1])
 
+# Colonne de gauche : Historique
 with col_history:
     st.subheader("Context")
-    for message in response.json()["messages"]:
+    for message in messages:
         st.chat_message(message["role"]).write(message["text"])
 
+# Colonne de droite : Éditeur IA
 with col_editor:
     st.subheader("Proposed AI Response")
     
-    draft_text = requests.get(f"{API_URL}/{ticket_id}/llm_response", headers=headers).json()["draft_response"]["reply"]
-    clean_text = html.unescape(draft_text).replace("<br />", "\n")
-    corrected_text = st.text_area("Edit response here:", value=clean_text, height=300)
+    # CRUCIAL : On lie le text_area au session_state pour NE PAS relancer l'API au moindre changement
+    corrected_text = st.text_area(
+        "Edit response here:", 
+        value=st.session_state.current_draft, 
+        height=300
+    )
     
     c1, c2, c3 = st.columns(3)
+    
+    # Bouton 1 : Valider et Envoyer
     with c1:
         if st.button("🚀 Approve & Send", use_container_width=True):
-            response = requests.post(f"{API_URL}/{ticket_id}/response", json={"text": corrected_text, "type": "Note"}, headers=headers)
-            st.success("Response sent to customer!")
+            try:
+                res = requests.post(
+                    f"{API_URL}/{ticket_id}/response", 
+                    json={"text": corrected_text, "type": "Note"}, 
+                    headers=headers,
+                    timeout=15
+                )
+                if res.status_code == 200:
+                    st.success("Response sent to customer!")
+                    # Optionnel : Forcer la mise à jour pour passer au ticket suivant
+                    st.rerun()
+            except Exception as e:
+                st.error(f"Erreur d'envoi: {e}")
 
+    # Bouton 2 : Reprompt AI
     with c2:
         reprompt_instruction = st.text_input("What should the AI change?", placeholder="Make it more formal...")
         if st.button("🔄 Reprompt AI", use_container_width=True):
             if reprompt_instruction:
                 with st.spinner("Gemini is rethinking..."):
-                    # Send the ticket ID and the special instruction to your FastAPI
-                    payload = {"instruction": reprompt_instruction}
-                    response = requests.post(f"{API_URL}/{ticket_id}/llm_response", json=payload, headers=headers).json()["draft_response"]
-                    
-                    st.session_state.draft = response
-                    st.rerun() 
+                    try:
+                        payload = {"instruction": reprompt_instruction}
+                        llm_res = requests.post(
+                            f"{API_URL}/{ticket_id}/llm_response", 
+                            json=payload, 
+                            headers=headers,
+                            timeout=60
+                        ).json()
+                        
+                        new_draft = llm_res["draft_response"]["reply"]
+                        # On met à jour le session_state avec la nouvelle réponse du LLM
+                        st.session_state.current_draft = html.unescape(new_draft).replace("<br />", "\n")
+                        st.rerun() 
+                    except Exception as e:
+                        st.error(f"Erreur lors du reprompt: {e}")
             else:
                 st.warning("Please enter an instruction first!")
 
+    # Bouton 3 : Lien direct
     with c3:
         if st.button("👉 Go straight to Ticket", use_container_width=True):
-            st.info("Generating new version...")
-
+            st.info("Action non configurée.")
