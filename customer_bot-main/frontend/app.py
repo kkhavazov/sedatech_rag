@@ -5,16 +5,12 @@ from dotenv import load_dotenv
 import streamlit as st
 
 load_dotenv()  
-
-# Configuration Streamlit (DOIT être en premier, juste après les imports)
 st.set_page_config(layout="wide") 
 
-# Configuration des variables globales et des en-têtes
 API_URL = os.environ["FASTAPI_INTERNAL_URL"] 
 API_KEY = os.environ["INTERNAL_API_KEY"]
 headers = {"X-API-Key": API_KEY}
 
-# --- SYSTÈME D'AUTHENTIFICATION ---
 def check_password():
     if "authenticated" not in st.session_state:
         st.session_state.authenticated = False
@@ -34,12 +30,10 @@ def check_password():
     
     return False
 
-if not check_password():
-    st.stop()
+# if not check_password():
+#     st.stop()
 
 
-# --- FONCTIONS API ---
-# Pas de cache ici pour répondre à votre exigence : la liste change constamment
 def get_open_list():
     EDESK_API_KEY = os.getenv("EDESK_API_KEY")
     if not EDESK_API_KEY:
@@ -54,7 +48,7 @@ def get_open_list():
     url = "https://api.edesk.com/v1/tickets?filter_status_equals=Pending"
 
     try:
-        response = requests.get(url, headers=edesk_headers, timeout=15)
+        response = requests.get(url, headers=edesk_headers, timeout=60.0)
         response.raise_for_status()
         return [ticket["id"] for ticket in response.json().get("data", [])]
     except Exception as e:
@@ -62,7 +56,7 @@ def get_open_list():
         return []
 
 
-# --- INTERFACE : SIDEBAR (FILE D'ATTENTE) ---
+
 with st.sidebar:
     st.title("Queue")
     open_tickets = get_open_list()
@@ -76,12 +70,14 @@ with st.sidebar:
         st.rerun()
 
 
-# --- CHARGEMENT DU TICKET SÉLECTIONNÉ ---
 st.header(f"Reviewing Ticket: {ticket_id}")
 
 try:
-    response = requests.get(f"{API_URL}/{ticket_id}", headers=headers, timeout=15)
-    response.raise_for_status()
+    response = requests.get(f"{API_URL}/{ticket_id}", headers=headers, timeout=60.0)
+    if not response.ok:
+        raise RuntimeError(
+            f"Backend returned {response.status_code}: {response.text[:1000]}"
+        )
     ticket_data = response.json()
     messages = ticket_data.get("messages", [])
 except Exception as e:
@@ -89,42 +85,48 @@ except Exception as e:
     st.stop()
 
 
-# --- GESTION DU DRAFT DANS LE SESSION STATE ---
-# On initialise les clés si elles n'existent pas
 if "current_draft" not in st.session_state:
     st.session_state.current_draft = ""
 if "last_ticket" not in st.session_state:
     st.session_state.last_ticket = None
 
-# GÉNERATION INITIALE : Uniquement si on change de ticket OU si le draft est vide
 if st.session_state.last_ticket != ticket_id or not st.session_state.current_draft:
     with st.spinner("Generating initial draft..."):
         try:
-            # Timeout long (60s) car les LLM peuvent être lents à répondre
-            llm_res = requests.get(f"{API_URL}/{ticket_id}/llm_response", headers=headers, timeout=60).json()
+
+            llm_response = requests.get(
+                f"{API_URL}/{ticket_id}/llm_response",
+                headers=headers,
+                timeout=120,
+            )
+
+            if not llm_response.ok:
+                raise RuntimeError(
+                    f"Backend returned {llm_response.status_code}: "
+                    f"{llm_response.text[:1000]}"
+                )
+
+            llm_res = llm_response.json()
+            draft_text = llm_res["draft_response"]["reply"]
             draft_text = llm_res["draft_response"]["reply"]
             
-            # On stocke le résultat propre dans le State
             st.session_state.current_draft = html.unescape(draft_text).replace("<br />", "\n")
             st.session_state.last_ticket = ticket_id
         except Exception as e:
             st.error(f"Erreur lors de la génération du draft initial : {e}")
 
 
-# --- AFFICHAGE DE L'INTERFACE 50/50 ---
+
 col_history, col_editor = st.columns([1, 1])
 
-# Colonne de gauche : Historique
 with col_history:
     st.subheader("Context")
     for message in messages:
         st.chat_message(message["role"]).write(message["text"])
 
-# Colonne de droite : Éditeur IA
 with col_editor:
     st.subheader("Proposed AI Response")
-    
-    # CRUCIAL : On lie le text_area au session_state pour NE PAS relancer l'API au moindre changement
+
     corrected_text = st.text_area(
         "Edit response here:", 
         value=st.session_state.current_draft, 
@@ -132,8 +134,6 @@ with col_editor:
     )
     
     c1, c2, c3 = st.columns(3)
-    
-    # Bouton 1 : Valider et Envoyer
     with c1:
         if st.button("🚀 Approve & Send", use_container_width=True):
             try:
@@ -141,16 +141,14 @@ with col_editor:
                     f"{API_URL}/{ticket_id}/response", 
                     json={"text": corrected_text, "type": "Note"}, 
                     headers=headers,
-                    timeout=15
+                    timeout=60.0
                 )
                 if res.status_code == 200:
                     st.success("Response sent to customer!")
-                    # Optionnel : Forcer la mise à jour pour passer au ticket suivant
                     st.rerun()
             except Exception as e:
                 st.error(f"Erreur d'envoi: {e}")
 
-    # Bouton 2 : Reprompt AI
     with c2:
         reprompt_instruction = st.text_input("What should the AI change?", placeholder="Make it more formal...")
         if st.button("🔄 Reprompt AI", use_container_width=True):
@@ -166,7 +164,6 @@ with col_editor:
                         ).json()
                         
                         new_draft = llm_res["draft_response"]["reply"]
-                        # On met à jour le session_state avec la nouvelle réponse du LLM
                         st.session_state.current_draft = html.unescape(new_draft).replace("<br />", "\n")
                         st.rerun() 
                     except Exception as e:
@@ -174,7 +171,6 @@ with col_editor:
             else:
                 st.warning("Please enter an instruction first!")
 
-    # Bouton 3 : Lien direct
     with c3:
         if st.button("👉 Go straight to Ticket", use_container_width=True):
             st.info("Action non configurée.")

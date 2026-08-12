@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+  fastapi:
+    build: ./backend  
+    ports:
+      - "8000:8000"
+    environment:
+      - INTERNAL_API_KEY=${INTERNAL_API_KEY}
+      - EDESK_API_KEY=${EDESK_API_KEY}
+      - CACHE_DATABASE_PATH=/app/data/cache.db
+    volumes:
+      - fastapi_cache:/app/data
+    networks:
+      - app-network
+
+  cache-warmer:
+    build: ./backend
+    command: ["python", "script.py"]
+    environment:
+      - EDESK_API_KEY=${EDESK_API_KEY}
+      - INTERNAL_API_KEY=${INTERNAL_API_KEY}
+      - BACKEND_TICKETS_URL=http://fastapi:8000/tickets
+      - CACHE_WARM_INTERVAL_SECONDS=3600
+      - CACHE_WARM_CONCURRENCY=1
+    depends_on:
+      - fastapi
+    restart: unless-stopped
+    networks:
+      - app-network
+
+  streamlit:
+    build: ./frontend
+    ports:
+      - "8502:8502"
+    environment:
+      - FASTAPI_INTERNAL_URL=${FASTAPI_INTERNAL_URL} 
+      - INTERNAL_API_KEY=${INTERNAL_API_KEY}
+      - APP_PASSWORD=${APP_PASSWORD}
+      - EDESK_API_KEY=${EDESK_API_KEY}
+    depends_on:
+      - fastapi
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge
+
+volumes:
+  fastapi_cache:

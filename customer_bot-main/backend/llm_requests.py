@@ -112,7 +112,6 @@ Summary:"""
             f"Precedent {i+1}: Customer problem: {m['problem_text']}\nResolution: {m['linked_resolution']}"
             for i, m in enumerate(matches)
         ]
-        print(context_blocks)
         retrieved_context = "\n\n".join(context_blocks) if context_blocks else "No close precedents found."
 
         summary_block = f"Summary of earlier conversation: {self.summary}\n\n" if self.summary else ""
@@ -145,10 +144,12 @@ Summary:"""
 def gemini_call(last_message, history, reprompt_instructions=None):
     convo = Conversation()
     for msg in history:
-        if msg.role == "Customer":
-            convo.add_customer_message(msg.text)
+        role = msg["role"] if isinstance(msg, dict) else msg.role
+        text = msg["text"] if isinstance(msg, dict) else msg.text
+        if role == "Customer":
+            convo.add_customer_message(text)
         else:
-            convo.add_agent_message(msg.text)
+            convo.add_agent_message(text)
     
     result = convo.get_agent_reply(last_message)
 
