@@ -3,7 +3,13 @@ import html
 import requests
 from dotenv import load_dotenv
 import streamlit as st
+from bs4 import BeautifulSoup
 
+
+def clean_html_for_rag(html_content: str) -> str:
+  soup = BeautifulSoup(html_content, "html.parser")
+  # Extract text with newlines to preserve structural spacing between paragraphs
+  return soup.get_text(separator="\n", strip=True)
 load_dotenv()  
 st.set_page_config(layout="wide") 
 
@@ -108,7 +114,6 @@ if st.session_state.last_ticket != ticket_id or not st.session_state.current_dra
 
             llm_res = llm_response.json()
             draft_text = llm_res["draft_response"]["reply"]
-            draft_text = llm_res["draft_response"]["reply"]
             
             st.session_state.current_draft = html.unescape(draft_text).replace("<br />", "\n")
             st.session_state.last_ticket = ticket_id
@@ -122,7 +127,7 @@ col_history, col_editor = st.columns([1, 1])
 with col_history:
     st.subheader("Context")
     for message in messages:
-        st.chat_message(message["role"]).write(message["text"])
+        st.chat_message(message["role"]).write(clean_html_for_rag(message["text"]))
 
 with col_editor:
     st.subheader("Proposed AI Response")
@@ -155,15 +160,20 @@ with col_editor:
             if reprompt_instruction:
                 with st.spinner("Gemini is rethinking..."):
                     try:
-                        payload = {"instruction": reprompt_instruction}
-                        llm_res = requests.post(
-                            f"{API_URL}/{ticket_id}/llm_response", 
-                            json=payload, 
+                        payload = {
+                            "instructions": reprompt_instruction,
+                            "last_response": st.session_state.current_draft,
+                        }
+                        reprompt_response = requests.post(
+                            f"{API_URL}/{ticket_id}/reprompt", 
+                            json=payload,
                             headers=headers,
                             timeout=60
-                        ).json()
+                        )
+                        reprompt_response.raise_for_status()
+                        llm_res = reprompt_response.json()
                         
-                        new_draft = llm_res["draft_response"]["reply"]
+                        new_draft = llm_res["draft_response"]
                         st.session_state.current_draft = html.unescape(new_draft).replace("<br />", "\n")
                         st.rerun() 
                     except Exception as e:

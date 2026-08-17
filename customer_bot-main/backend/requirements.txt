@@ -8,3 +8,4 @@ ollama
 fastapi-cache2[redis]
 jinja2
 qdrant_client
+google-genai

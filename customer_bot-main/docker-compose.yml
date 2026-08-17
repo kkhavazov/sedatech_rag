@@ -9,6 +9,7 @@ services:
       - INTERNAL_API_KEY=${INTERNAL_API_KEY}
       - EDESK_API_KEY=${EDESK_API_KEY}
       - CACHE_DATABASE_PATH=/app/data/cache.db
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
     volumes:
       - fastapi_cache:/app/data
     networks:

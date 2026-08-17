@@ -5,7 +5,7 @@ import httpx
 import asyncio
 from pydantic import BaseModel
 import os
-from llm_requests import gemini_call
+from llm_requests import gemini_call, reprompt_call
 from database import (
     get_cached_draft,
     get_cached_message_ids,
@@ -257,3 +257,33 @@ async def post_response(ticket_id: str, body: TicketPostResponseBody):
     
     response = httpx.post(url, json=payload, headers=headers)
     return {"message": f"Response for ticket {ticket_id} sent successfully!, Status code: {response.status_code}", "Error": {response.text} if response.status_code != 200 else None}
+
+
+class TicketRepromptResponseBody(BaseModel):
+    instructions: str
+    last_response: str
+
+@app.post("/tickets/{ticket_id}/reprompt")
+async def post_reprompt(ticket_id, body: TicketRepromptResponseBody):
+    timeout = httpx.Timeout(30.0, connect=5.0)
+    
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        raw_ticket = await get_remote_ticket(client, ticket_id)
+        formatted_messages, messages_cache_hit, last_message_id = await get_ticket_messages(
+            client, ticket_id, raw_ticket
+        )
+
+    draft_text = await asyncio.to_thread(
+        reprompt_call,
+        body.instructions,
+        body.last_response
+    )
+    await asyncio.to_thread(store_draft, ticket_id, last_message_id, draft_text)
+
+    return {
+        "ticket_id": ticket_id,
+        "draft_response": draft_text,
+        "last_message_id": last_message_id,
+        "cache_hit": False,
+        "messages_cache_hit": messages_cache_hit,
+    }

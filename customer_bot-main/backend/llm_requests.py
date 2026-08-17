@@ -150,10 +150,32 @@ def gemini_call(last_message, history, reprompt_instructions=None):
             convo.add_customer_message(text)
         else:
             convo.add_agent_message(text)
+
+    if reprompt_instructions != None:
+        last_message += f"""
+    INSTRUCTION TO THE PROMPT
+    {reprompt_instructions}
+"""
     
     result = convo.get_agent_reply(last_message)
 
     return result
+
+def reprompt_call(instructions, last_response):
+    from google import genai
+    from google.genai import types
+    
+    load_dotenv()  
+
+    client = genai.Client()
+
+    full_prompt = f"{instructions}\n\nBase context / Last message:\n{last_response}"
+    response = client.models.generate_content(
+        model='gemini-2.5-flash',
+        contents=full_prompt,
+    )
+
+    return response.text
 
 if __name__ == "__main__":
     convo = Conversation()
